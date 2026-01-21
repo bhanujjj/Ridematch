@@ -113,6 +113,16 @@ python -m uvicorn src.match_api.main:app --host 0.0.0.0 --port 8000
 
 ---
 
+## 🛡️ CI/CD & Reliability
+
+The project employs a Production-Grade CI/CD pipeline using GitHub Actions (`.github/workflows/ci.yml`) to guarantee:
+
+1.  **Code Quality**: Automated linting with `ruff`.
+2.  **Observability Guarantees**: Unit tests verify that critical metrics (latency, drift score) are exposed.
+3.  **Model Compatibility**: Automated checks ensure the serialized model artifact has required methods (`predict_proba`).
+4.  **Drift Detection Validity**: Validates that training-time baseline statistics (`feature_stats.json`) are present.
+5.  **Docker Smoke Test**: Builds and runs the container in a hollow environment to verify startup and endpoint availability.
+
 ## 📊 Monitoring
 
 The system comes with a pre-configured monitoring stack.

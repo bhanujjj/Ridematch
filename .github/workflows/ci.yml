@@ -1,0 +1,106 @@
+name: RideMatch CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint:
+    name: Code Quality (Lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Lint Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+      - name: Lint with Ruff
+        run: |
+          ruff check .
+
+  test:
+    name: Unit & Observability Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest httpx pandas fastapi uvicorn prometheus-client scikit-learn numpy
+      
+      - name: Validate Feature Stats Existence
+        run: |
+          if [ ! -f "models/feature_stats.json" ]; then
+            echo "❌ Critical: 'models/feature_stats.json' missing!"
+            echo "   Drift detection requires this file."
+            exit 1
+          else
+            echo "✅ Found feature stats file."
+          fi
+
+      - name: Run Unit Tests (Mocked)
+        run: |
+          export PYTHONPATH=.
+          pytest tests/test_ci.py
+
+  model-check:
+    name: Model Artifact Verification
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Dependencies
+        run: |
+          pip install scikit-learn numpy pandas joblib
+      
+      - name: Verify Model Compatibility
+        run: |
+          python scripts/check_model.py
+
+  docker-smoke:
+    name: Docker Build & Smoke Test
+    needs: [test, model-check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker Image
+        run: |
+          docker build -t ridematch-api -f infra/Dockerfile .
+          
+      - name: Run Container (Smoke Test)
+        run: |
+          # Run with SKIP_RESOURCES_INIT to test container startup without Redis/MinIO
+          docker run -d --name api -p 8000:8000 -e SKIP_RESOURCES_INIT=true ridematch-api
+          
+          # Wait for startup
+          sleep 5
+          
+          # Check logs
+          docker logs api
+          
+          # Hit endpoints
+          status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/metrics)
+          if [ "$status" != "200" ]; then
+            echo "❌ /metrics endpoint failed with status $status"
+            exit 1
+          fi
+          echo "✅ /metrics endpoint healthy"
+          
+          # Cleanup
+          docker stop api

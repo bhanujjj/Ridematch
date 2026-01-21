@@ -135,6 +135,79 @@
                     "legendFormat": "missing_features"
                 }
             ]
+        },
+        {
+            "id": 5,
+            "type": "gauge",
+            "title": "Feature Drift Score (p95 Delta)",
+            "datasource": "Prometheus",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 16
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.1
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.2
+                            }
+                        ]
+                    },
+                    "min": 0,
+                    "max": 1
+                }
+            },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "feature_drift_score",
+                    "legendFormat": "{{feature_name}}"
+                }
+            ]
+        },
+        {
+            "id": 6,
+            "type": "heatmap",
+            "title": "Feature Value Distributions",
+            "datasource": "Prometheus",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 16
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "scheme",
+                        "scheme": "Spectral"
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum(rate(feature_values_bucket[5m])) by (le)",
+                    "format": "heatmap",
+                    "legendFormat": "{{le}}"
+                }
+            ]
         }
     ],
     "refresh": "5s",

@@ -486,6 +486,27 @@ def main():
     # Train model
     model, metrics = train_model(X_train, y_train, X_val, y_val)
     
+    # Compute baseline feature statistics
+    print("📊 Computing baseline feature statistics...")
+    stats = {}
+    for col in feature_cols:
+        series = X_train[col]
+        stats[col] = {
+            "mean": float(series.mean()),
+            "std": float(series.std()),
+            "p50": float(series.median()),
+            "p95": float(series.quantile(0.95)),
+            "min": float(series.min()),
+            "max": float(series.max())
+        }
+    
+    # Save stats to local file
+    import json
+    stats_path = project_root / "models" / "feature_stats.json"
+    with open(stats_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"✅ Feature stats saved to {stats_path}")
+    
     # Log to MLflow
     print("\n📝 Logging to MLflow...")
     with mlflow.start_run() as run:
@@ -517,6 +538,11 @@ def main():
             print("✅ Model logged to MLflow")
             print(f"   Model path: {model_path}")
             model_logged = True
+            
+            # Log feature stats artifact
+            mlflow.log_artifact(str(stats_path), artifact_path="feature_stats")
+            print("✅ Feature stats logged to MLflow")
+            
         except mlflow.exceptions.MlflowException as e:
             if "logged-models" in str(e) or "404" in str(e):
                 # API compatibility issue - log_model() calls unsupported endpoint
