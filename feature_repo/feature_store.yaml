@@ -1,0 +1,12 @@
+project: ridematch
+registry: data/registry.db
+provider: local
+
+# Use MinIO (S3-compatible) as the offline store via the S3OfflineStore.
+# Credentials are read from env vars (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, etc.).
+offline_store:
+  type: file    # PyArrow will access s3:// paths using env credentials (MinIO)
+
+online_store:
+  type: redis
+  connection_string: "localhost:6379"
