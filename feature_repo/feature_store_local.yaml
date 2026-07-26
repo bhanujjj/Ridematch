@@ -1,6 +1,8 @@
 project: ridematch_local
 entity_key_serialization_version: 2
-registry: /Users/bhanujbhalla/Desktop/Projects/RideMatch/feature_repo/data/registry_local.db
+# Relative to repo_path, same convention as feature_store.yaml -- avoids
+# hardcoding a path tied to one machine/user.
+registry: data/registry_local.db
 provider: local
 
 offline_store:
@@ -8,4 +10,4 @@ offline_store:
 
 online_store:
   type: sqlite
-  path: /Users/bhanujbhalla/Desktop/Projects/RideMatch/feature_repo/data/online_store_local.db
+  path: data/online_store_local.db

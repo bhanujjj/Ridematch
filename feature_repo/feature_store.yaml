@@ -9,4 +9,8 @@ offline_store:
 
 online_store:
   type: redis
-  connection_string: "localhost:6379"
+  # Expanded via Feast's os.path.expandvars: localhost:6379 on the host,
+  # redis:6379 inside a container (set in Dockerfile/docker-compose).
+  # minio_config.py's SERVICES.export_env() guarantees these are always set
+  # before Feast parses this file, even on the host where nothing exports them.
+  connection_string: "${REDIS_HOST}:${REDIS_PORT}"

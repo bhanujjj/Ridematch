@@ -11,7 +11,10 @@ mlflow==2.13.0  # pin to match the ghcr.io/mlflow/mlflow:v2.13.0 server image --
                 # server doesn't have, so log_model()/register_model() 404
 setuptools<81  # mlflow==2.13.0 imports pkg_resources; setuptools>=81 dropped it entirely
 prefect>=2.14.0,<3.0.0
-scikit-learn
+scikit-learn==1.5.2  # pin to match the training host -- an unpinned install picks
+                     # up whatever's latest, and a newer sklearn unpickling an
+                     # older-trained model breaks internal attrs (e.g. SimpleImputer's
+                     # _fill_dtype), not just a version-skew warning
 confluent-kafka
 fastapi
 uvicorn[standard]

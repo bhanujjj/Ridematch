@@ -108,6 +108,17 @@ class ServiceConfig:
         default_factory=lambda: int(_env("RIDEMATCH_CANDIDATE_POOL", "100"))
     )
 
+    def export_env(self) -> None:
+        """
+        Push REDIS_HOST/REDIS_PORT into os.environ.
+
+        feature_store.yaml's online_store.connection_string reads these via
+        Feast's `${VAR}` expansion (os.path.expandvars), so they must be set
+        before Feast parses that file -- same reasoning as S3Config.export_env.
+        """
+        os.environ.setdefault("REDIS_HOST", self.redis_host)
+        os.environ.setdefault("REDIS_PORT", str(self.redis_port))
+
 
 S3 = S3Config()
 KAFKA = KafkaConfig()

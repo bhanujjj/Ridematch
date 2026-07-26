@@ -213,6 +213,44 @@ services:
     depends_on:
       - prometheus
 
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ridematch-api
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    environment:
+      # Dockerfile already bakes in the container-network hostnames
+      # (kafka:29092, redis, minio:9000, mlflow:5000) as defaults; only
+      # MinIO credentials need to come from the same source as the other
+      # services so they can't drift.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MATCH_API_KEY: ${MATCH_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      # feast apply/materialize and retraining run on the host and write
+      # here; bind-mounting (rather than relying on the build-time COPY)
+      # means the container sees fresh registry/model state without a
+      # rebuild. Code changes still require a rebuild, same as any image.
+      - ../feature_repo/data:/app/feature_repo/data
+      - ../models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
 volumes:
   kafka_data:
   redis_data:

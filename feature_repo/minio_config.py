@@ -15,10 +15,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import S3
+from src.config import S3, SERVICES
 
 # Push AWS_*/ARROW_* vars into os.environ for PyArrow, boto3 and the Feast CLI.
 S3.export_env()
+# Push REDIS_HOST/REDIS_PORT so feature_store.yaml's "${REDIS_HOST}:${REDIS_PORT}"
+# resolves correctly on both host (localhost) and in a container (redis).
+SERVICES.export_env()
 
 # Kept as module-level names because existing scripts import them.
 MINIO_ENDPOINT = S3.endpoint_url

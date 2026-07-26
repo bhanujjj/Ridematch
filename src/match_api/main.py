@@ -8,7 +8,7 @@ from pathlib import Path
 import mlflow
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from feast import FeatureStore
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -76,6 +76,10 @@ FEATURE_DRIFT = Gauge(
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 FEATURE_REPO_PATH = PROJECT_ROOT / "feature_repo"
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5050")
+# Unset/empty by default so local dev and the existing test suite need no
+# extra setup; set MATCH_API_KEY to require it. Deliberately not required
+# for /health or /ready -- probes/orchestrators must reach those unauthenticated.
+MATCH_API_KEY = os.getenv("MATCH_API_KEY", "")
 MODEL_NAME = "ridematch-ranker"
 # In a real scenario, we might use a stage like "Production", but locally we may need to find the latest version.
 # For simplicity, we'll try to load "models:/ridematch-ranker/Production" or fallback to latest.
@@ -83,6 +87,12 @@ MODEL_URI = f"models:/{MODEL_NAME}/Production"
 
 # Ensure feature_repo is in path for Feast to find definitions if needed
 sys.path.insert(0, str(FEATURE_REPO_PATH))
+# Must happen before FeatureStore(...) below: feature_store.yaml's
+# online_store.connection_string is "${REDIS_HOST}:${REDIS_PORT}", expanded
+# by Feast via os.path.expandvars at parse time. FeatureStore's constructor
+# doesn't import feature_views.py (that only happens on repo-scanning
+# operations like `apply`), so nothing else guarantees these are set.
+import minio_config  # noqa: E402,F401
 
 # Global variables for resources
 resources = {}
@@ -264,6 +274,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RideMatch Real-Time API", lifespan=lifespan)
 
+
+def require_api_key(x_api_key: str = Header(default="")) -> None:
+    """
+    Gate /match behind a shared-secret header when MATCH_API_KEY is set.
+    A no-op when it isn't, so local dev / CI need no extra configuration.
+    """
+    if MATCH_API_KEY and x_api_key != MATCH_API_KEY:
+        MATCH_ERRORS.labels(error_type="unauthorized").inc()
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
 @app.get("/metrics")
 async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -297,7 +318,7 @@ async def ready(response: Response):
     detail["status"] = "ready" if ok else "not_ready"
     return detail
 
-@app.post("/match", response_model=MatchResponse)
+@app.post("/match", response_model=MatchResponse, dependencies=[Depends(require_api_key)])
 @MATCH_REQUEST_LATENCY.time()
 def match_drivers(request: MatchRequest):
     """
