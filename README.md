@@ -44,7 +44,7 @@ flowchart TD
 
 ## 🚀 Key Features
 
-*   **Real-Time Inference**: FastAPI service responding in <10ms (p95) using cached online features.
+*   **Real-Time Inference**: FastAPI service returning ranked matches from cached online features; p50 ~35ms, p95 ~145ms at 20 concurrent requests -- see [Measured Performance](#measured-performance) for the full, reproducible numbers below.
 *   **Feature Store**: **Feast** backed by **Redis** (Online) and **MinIO** (Offline) to prevent training-serving skew.
 *   **Model Registry**: **MLflow** for robust version control, experiment tracking, and model staging.
 *   **Orchestration**: **Prefect** workflows for reliable ETL pipelines and scheduled re-training.
@@ -64,6 +64,40 @@ flowchart TD
 | **Streaming** | Apache Kafka | Ingestion of driver availability events |
 | **Monitoring** | Prometheus, Grafana | System health, latency, and data drift tracking |
 | **Infrastructure** | Docker Compose | Container orchestration |
+
+---
+
+## 📈 Measured Performance
+
+Numbers below are from an actual run against the full containerized stack, not
+estimates -- reproduce with `python scripts/bench_latency.py -n 1000 -c 20`
+(writes `reports/latency.json`).
+
+**Latency** (`/match`, 500 requests, concurrency 20):
+
+| Metric | Value |
+| :--- | :--- |
+| p50 | 34.9 ms |
+| p90 | 107.4 ms |
+| p95 | 144.7 ms |
+| p99 | 333.1 ms |
+| Throughput | 332.6 req/s |
+| Errors | 0 / 500 |
+
+**Model** (`python -m src.models.train_ranking_model`):
+
+| Metric | Value |
+| :--- | :--- |
+| Validation AUC | 0.72 |
+| Validation Accuracy | 0.68 |
+
+The label is a stochastic logistic acceptance model (see
+`acceptance_probability` in `train_ranking_model.py`), deliberately
+non-deterministic so no single feature can perfectly predict it. AUC is
+expected to land in a 0.70-0.85 band; anything above 0.99 trips a leakage
+warning rather than being reported as an improvement -- an earlier version of
+this pipeline had exactly that bug (nearest-driver label leaking through the
+`distance_km` feature) and it silently produced ~0.99 AUC.
 
 ---
 
