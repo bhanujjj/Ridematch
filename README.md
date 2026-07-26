@@ -1,77 +1,111 @@
 # 🚖 RideMatch: Real-Time Driver Matching System
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.95%2B-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Feast](https://img.shields.io/badge/Feast-0.34%2B-orange)](https://feast.dev/)
-[![MLflow](https://img.shields.io/badge/MLflow-Tracking-blue)](https://mlflow.org/)
-[![Prefect](https://img.shields.io/badge/Prefect-Orchestration-white)](https://www.prefect.io/)
-[![Kafka](https://img.shields.io/badge/Kafka-Streaming-black?logo=apachekafka)](https://kafka.apache.org/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.128-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Feast](https://img.shields.io/badge/Feast-0.40.1-orange)](https://feast.dev/)
+[![MLflow](https://img.shields.io/badge/MLflow-2.13-blue)](https://mlflow.org/)
+[![Prefect](https://img.shields.io/badge/Prefect-2.20-white)](https://www.prefect.io/)
+[![Kafka](https://img.shields.io/badge/Kafka-7.6.1%20(KRaft)-black?logo=apachekafka)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
 
-> **A production-grade, real-time machine learning system** for matching riders with drivers. Built with modern MLOps principles, this project demonstrates an end-to-end pipeline from data ingestion to real-time inference and monitoring.
+> A real-time ML system that matches riders with drivers: Kafka ingestion →
+> Feast feature store → MLflow-tracked model → FastAPI serving, with
+> Prometheus/Grafana observability end to end. Every number in this README
+> is measured against a live run of the full stack, not estimated — see
+> [Measured Performance](#measured-performance).
 
 ---
 
-## 🏗️ System Architecture
+## 🔄 How It Works
 
-RideMatch connects multiple components to deliver low-latency match predictions:
+Three independent flows share the same feature store, so training and
+serving always see the same feature definitions:
 
 ```mermaid
 flowchart TD
-    subgraph "Data & Feature Engineering"
-        Kafka[Apache Kafka] -->|Stream Events| Prefect[Prefect ETL]
-        Prefect -->|Materialize| Feast[Feast Feature Store]
-        Feast -->|Offline| MinIO[(MinIO S3)]
-        Feast -->|Online| Redis[(Redis)]
+    subgraph Ingestion["1 — Ingestion & ETL"]
+        Gen[Event Generator] -->|driver events| Kafka[Apache Kafka]
+        Kafka -->|consume, at-least-once| ETL[Prefect ETL]
+        ETL -->|parquet| MinIO[(MinIO / S3)]
     end
 
-    subgraph "Model Training"
-        MLflow[MLflow Tracking] <-- Log/Reg --> TrainingWorker[Training Job]
-        MinIO --> TrainingWorker
+    subgraph Features["2 — Feature Store"]
+        MinIO -->|offline source| Apply[feast apply / materialize]
+        Apply -->|online| Redis[(Redis)]
+        Apply -->|registry| RegDB[(registry.db)]
     end
 
-    subgraph "Real-Time Serving"
-        Rider((Rider App)) -->|Request| API[FastAPI Match Service]
-        API -->|Fetch Features| Redis
-        API -->|Load Model| MLflow
-        API -->|Metrics| Prom[Prometheus]
+    subgraph Training["3 — Training"]
+        MinIO -->|historical features| Train[train_ranking_model.py]
+        Train -->|log + register| MLflow[MLflow: Postgres + MinIO artifacts]
     end
 
-    subgraph "Monitoring"
-        Prom --> Grafana[Grafana Dashboard]
+    subgraph Serving["4 — Real-Time Serving"]
+        Rider((Rider Request)) -->|POST /match| API[FastAPI]
+        API -->|online features| Redis
+        API -->|load model| MLflow
+        API -->|ranked matches| Rider
+        API -->|/metrics| Prom[Prometheus]
     end
+
+    Prom --> Grafana[Grafana Dashboards]
 ```
 
-## 🚀 Key Features
+**1. Ingestion & ETL** — `data_sim/generator.py` produces synthetic driver
+location/status events onto a Kafka topic (KRaft mode, no Zookeeper).
+`prefect/flows/etl_flow.py` consumes in batches, writes Parquet to MinIO, and
+only commits Kafka offsets *after* the write succeeds — a crash mid-batch
+replays instead of silently dropping events.
 
-*   **Real-Time Inference**: FastAPI service returning ranked matches from cached online features; p50 ~35ms, p95 ~145ms at 20 concurrent requests -- see [Measured Performance](#measured-performance) for the full, reproducible numbers below.
-*   **Feature Store**: **Feast** backed by **Redis** (Online) and **MinIO** (Offline) to prevent training-serving skew.
-*   **Model Registry**: **MLflow** for robust version control, experiment tracking, and model staging.
-*   **Orchestration**: **Prefect** workflows for reliable ETL pipelines and scheduled re-training.
-*   **Observability**: Full stack monitoring with **Prometheus** (metrics scraping) and **Grafana** (dashboards for latency, data quality, and error rates).
-*   **Reproducibility**: Dockerized environment for consistent deployment.
+**2. Feature Store** — Feast reads the same Parquet files as an offline
+source (`type: file`, pointed at an `s3://` path served by MinIO) and
+materializes point-in-time-correct feature values into Redis for low-latency
+lookup. The feature registry (`registry.db`) is the single source of truth
+both training and serving read against, so there's no train/serve schema
+drift.
+
+**3. Training** — `train_ranking_model.py` pulls historical features from
+Feast, simulates ride requests against them with a **stochastic** acceptance
+label (see [Measured Performance](#measured-performance) for why this
+matters), trains a `LogisticRegression` pipeline, and logs + registers it
+with MLflow (Postgres-backed registry, MinIO-backed artifacts).
+
+**4. Serving** — FastAPI's `/match` endpoint fetches ~100 candidate drivers'
+features from Redis via Feast, computes haversine distance to the rider,
+scores each candidate with the registered model, and returns the top-k
+ranked matches. The endpoint is a **sync** `def`, deliberately — it does
+blocking Redis I/O and CPU-bound sklearn inference, and running it as
+`async def` would serialize every concurrent request on the event loop
+instead of using FastAPI's threadpool.
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Component | Technology | Role |
+| Layer | Technology | Notes |
 | :--- | :--- | :--- |
-| **Serving** | FastAPI, Uvicorn | High-performance REST API for inference |
-| **Feature Store** | Feast, Redis, MinIO | Serving real-time and historical features |
-| **ML Ops** | MLflow | Model tracking, registry, and artifact storage |
-| **Orchestration** | Prefect | Workflow management (ETL, Training) |
-| **Streaming** | Apache Kafka | Ingestion of driver availability events |
-| **Monitoring** | Prometheus, Grafana | System health, latency, and data drift tracking |
-| **Infrastructure** | Docker Compose | Container orchestration |
+| **Streaming** | Kafka 7.6.1 (KRaft) | `confluentinc/cp-kafka`, no Zookeeper |
+| **Orchestration** | Prefect 2.20 | At-least-once ETL semantics |
+| **Object storage** | MinIO | S3-compatible; Feast offline store *and* MLflow artifacts |
+| **Feature store** | Feast 0.40.1 | Offline: file/S3. Online: Redis |
+| **Online store** | Redis 7.2 | Sub-ms feature lookups at serving time |
+| **Model registry** | MLflow 2.13.0 | Postgres 16 backend, MinIO artifact store |
+| **Training** | scikit-learn 1.5.2, pandas, numpy | `LogisticRegression` ranking pipeline |
+| **Serving** | FastAPI 0.128, Uvicorn | Sync endpoint + threadpool for real concurrency |
+| **Auth** | Optional `X-API-Key` header | No-op unless `MATCH_API_KEY` is set |
+| **Observability** | Prometheus 2.53, Grafana 11.1 | Per-feature histograms, drift gauge, auto-provisioned dashboard |
+| **Containerization** | Docker Compose | Every service pinned, healthchecked, `depends_on.condition`-gated |
 
 ---
 
 ## 📈 Measured Performance
 
-Numbers below are from an actual run against the full containerized stack, not
-estimates -- reproduce with `python scripts/bench_latency.py -n 1000 -c 20`
-(writes `reports/latency.json`).
+Numbers below are from an actual run against the full containerized stack
+(all 9 services, including the `api` container) — reproduce with:
+```bash
+python scripts/bench_latency.py -n 1000 -c 20
+```
+which writes `reports/latency.json`.
 
 **Latency** (`/match`, 500 requests, concurrency 20):
 
@@ -94,81 +128,131 @@ estimates -- reproduce with `python scripts/bench_latency.py -n 1000 -c 20`
 The label is a stochastic logistic acceptance model (see
 `acceptance_probability` in `train_ranking_model.py`), deliberately
 non-deterministic so no single feature can perfectly predict it. AUC is
-expected to land in a 0.70-0.85 band; anything above 0.99 trips a leakage
-warning rather than being reported as an improvement -- an earlier version of
-this pipeline had exactly that bug (nearest-driver label leaking through the
-`distance_km` feature) and it silently produced ~0.99 AUC.
+expected to land in a **0.70–0.85 band**; anything above 0.99 trips a
+leakage warning rather than being reported as an improvement. An earlier
+version of this pipeline had exactly that bug — the nearest driver was
+labeled the positive class while `distance_km` was also fed in as a
+feature, so the label was a deterministic function of an input and the
+model scored ~0.99 AUC while having learned nothing transferable.
 
 ---
 
 ## ⚡ Quick Start
 
 ### Prerequisites
-*   Docker & Docker Compose
-*   Python 3.9+
-*   Git
+* Docker Desktop (running)
+* Python 3.11+
+* Git
 
-### 1. Clone & Setup
+### Option A — one-shot script (host-run API)
 ```bash
 git clone https://github.com/bhanujjj/Ridematch.git
 cd Ridematch
-
-# Create virtual env
-python -m venv .mlflow-venv
-source .mlflow-venv/bin/activate
+python -m venv .mlflow-venv && source .mlflow-venv/bin/activate
 pip install -r requirements.txt
+
+# Wipe any old volumes first if you've run this before with an older
+# Kafka/Zookeeper setup -- KRaft won't start on Zookeeper-era volumes.
+docker compose -f infra/docker-compose.yml down -v
+
+bash scripts/start_stack.sh   # compose up, generator, ETL, materialize, train, serve
+python scripts/bench_latency.py -n 1000 -c 20
 ```
 
-### 2. Start Infrastructure
-Spin up Kafka, Redis, MinIO, MLflow, Prometheus, and Grafana:
+### Option B — fully containerized (API runs in Docker too)
 ```bash
 cd infra
-docker-compose up -d
+docker compose up -d --build     # brings up all 9 services, including `api`
+docker compose ps                # confirm everything is healthy
+curl localhost:8000/ready
 ```
+The `api` container bind-mounts `feature_repo/data/` and `models/`, so
+retraining or re-materializing on the host is picked up without a rebuild —
+only code changes require `docker compose build api`.
 
-### 3. Initialize Feature Store & Materialize Data
+### Try it
 ```bash
-cd feature_repo
-feast apply
-python materialize_features.py
-```
-
-### 4. Train & Register Model
-```bash
-cd ../src/models
-python train_ranking_model.py
-```
-
-### 5. Run the Match API
-```bash
-cd ../../
-python -m uvicorn src.match_api.main:app --host 0.0.0.0 --port 8000
+curl -sX POST localhost:8000/match \
+  -H 'Content-Type: application/json' \
+  -d '{"rider_id":"r1","rider_lat":40.71,"rider_lon":-74.0,"top_k":5}'
 ```
 
 ---
 
-## 🛡️ CI/CD & Reliability
+## 🔐 Configuration
 
-The project employs a Production-Grade CI/CD pipeline using GitHub Actions (`.github/workflows/ci.yml`) to guarantee:
+Every endpoint/credential is env-driven with a local-development default
+(`src/config.py`) — the same code runs on the host (`localhost:9092`) or in
+a container (`kafka:29092`) with no edits.
 
-1.  **Code Quality**: Automated linting with `ruff`.
-2.  **Observability Guarantees**: Unit tests verify that critical metrics (latency, drift score) are exposed.
-3.  **Model Compatibility**: Automated checks ensure the serialized model artifact has required methods (`predict_proba`).
-4.  **Drift Detection Validity**: Validates that training-time baseline statistics (`feature_stats.json`) are present.
-5.  **Docker Smoke Test**: Builds and runs the container in a hollow environment to verify startup and endpoint availability.
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `MATCH_API_KEY` | *(unset)* | If set, `/match` requires a matching `X-API-Key` header. `/health` and `/ready` are always open. |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Feast online store |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `kafka:29092` inside containers |
+| `S3_ENDPOINT_URL` | `http://localhost:9000` | MinIO endpoint for Feast's offline store + MLflow artifacts |
+| `MLFLOW_TRACKING_URI` | `http://localhost:5050` | `http://mlflow:5000` inside containers |
+
+---
+
+## 📡 API Reference
+
+| Endpoint | Method | Auth | Purpose |
+| :--- | :--- | :--- | :--- |
+| `/health` | GET | No | Liveness — always 200 if the process is up |
+| `/ready` | GET | No | Readiness — 503 until Feast + model are loaded |
+| `/match` | POST | Optional (`X-API-Key`) | Rank candidate drivers for a rider request |
+| `/metrics` | GET | No | Prometheus exposition format |
+
+`/ready` names which resource failed (`feature_store` / `model`) in its
+response body, and startup is intentionally non-fatal — the process stays
+up and debuggable instead of crash-looping.
+
+---
+
+## 🛡️ CI/CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR:
+
+1. **Lint** — `ruff`, pinned via `ruff.toml` to a stable baseline
+   (`E4, E7, E9, F`) rather than ruff's unpinned defaults, which pull in an
+   ever-widening set of opinionated rules (blind-except, datetime-tz,
+   bandit) that drift between versions and flag intentional patterns —
+   this codebase's broad `except Exception` in the API's startup handler is
+   a deliberate graceful-degradation design, not an oversight.
+2. **Tests** — `pytest tests/test_ci.py` (feast/mlflow mocked, no infra needed).
+3. **Model check** — verifies a committed model artifact has
+   `predict`/`predict_proba`.
+4. **Docker smoke test** — builds the real `Dockerfile`, boots it with
+   `SKIP_RESOURCES_INIT=true`, and checks `/metrics` returns 200.
+
+---
 
 ## 📊 Monitoring
 
-The system comes with a pre-configured monitoring stack.
+* **Prometheus** (`:9090`) scrapes `/metrics` from the API — request
+  latency histogram, error counter, per-feature value histograms
+  (`feature_distance_km`, `feature_accept_rate_7d`, `feature_avg_response_ms`
+  — split out because they live on wildly different scales and a shared
+  histogram made every accept-rate observation collapse into one bucket),
+  and a drift gauge (p95 delta vs. training baseline).
+* **Grafana** (`:3000`, `admin`/`admin`) — datasource and dashboard are
+  auto-provisioned on `compose up`, no manual click-through required.
 
-1.  **Prometheus**: Scrapes API metrics from `http://localhost:8000/metrics`.
-2.  **Grafana**: Visualizes system health.
-    *   **URL**: `http://localhost:3000` (User/Pass: `admin`/`admin`)
-    *   **Dashboard**: Import `infra/grafana_dashboard.json` to see:
-        *   Request Latency (p50/p95)
-        *   Error Rates
-        *   Prediction Score Distributions
-        *   Missing Feature Rates
+---
+
+## ⚠️ Known Limitations
+
+Documented rather than silently left as surprises for the next person:
+
+* **Feast registry is a local file** (`feature_repo/data/registry.db`), not
+  Postgres/S3-backed. Fine at this scale; a real multi-instance deployment
+  would need a shared registry.
+* **Single instance of everything** — one Kafka broker, one Redis, one
+  Postgres. No replication, no HA story.
+* **No rate limiting** on `/match` beyond what the auth header provides.
+* **`offline_store: type: file`** in `feature_store.yaml` reads `s3://`
+  paths via PyArrow — works, but reads as contradictory at a glance.
 
 ---
 
@@ -176,13 +260,18 @@ The system comes with a pre-configured monitoring stack.
 
 ```text
 ├── src/
-│   ├── match_api/       # FastAPI application & Request schemas
-│   └── models/          # Model training & Logic
-├── feature_repo/        # Feast configuration & definitions
-├── infra/               # Docker Compose & Monitoring configs
-├── prefect/             # ETL & Workflow definitions
-├── tests/               # Integration tests
-└── requirements.txt     # Python dependencies
+│   ├── config.py       # Central env-driven config (single source of truth)
+│   ├── match_api/      # FastAPI app, schemas, auth
+│   └── models/         # Training pipeline
+├── feature_repo/       # Feast definitions, registry, feature_store.yaml
+├── prefect/flows/      # ETL, training, and serving flows
+├── data_sim/           # Synthetic driver event generator
+├── infra/              # docker-compose.yml, Grafana/Prometheus config
+├── scripts/            # start_stack.sh, bench_latency.py, check_model.py
+├── tests/              # Unit + CI tests (mocked, no infra required)
+├── Dockerfile          # Multi-stage, non-root, healthchecked API image
+├── ruff.toml           # Pinned lint baseline
+└── HANDOFF.md          # Run/debug notes for whoever picks this up next
 ```
 
 ---
