@@ -74,16 +74,17 @@ def test_match_endpoint_drift_update(mock_resources):
         "top_k": 1
     }
     
-    with patch.object(resources["drift_detector"], "observe") as mock_observe:
+    with patch.object(resources["drift_detector"], "observe_many") as mock_observe_many:
         response = client.post("/match", json=payload)
         if response.status_code != 200:
             print(f"Server Error: {response.text}")
         assert response.status_code == 200
-        
-        # Verify observe was called for features
-        # We expect observe call for distance_km, accept_rate_7d, avg_response_ms
-        assert mock_observe.call_count >= 3
-        calls = [args[0] for args, _ in mock_observe.call_args_list]
+
+        # Verify observe_many was called for features (vectorized, one call per
+        # feature rather than one call per candidate x feature)
+        # We expect a call for distance_km, accept_rate_7d, avg_response_ms
+        assert mock_observe_many.call_count >= 3
+        calls = [args[0] for args, _ in mock_observe_many.call_args_list]
         assert "distance_km" in calls
         assert "accept_rate_7d" in calls
 
