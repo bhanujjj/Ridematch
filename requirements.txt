@@ -10,3 +10,7 @@ mlflow
 prefect>=2.14.0,<3.0.0
 scikit-learn
 confluent-kafka
+fastapi
+uvicorn[standard]
+prometheus-client
+httpx

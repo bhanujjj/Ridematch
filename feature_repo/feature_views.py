@@ -25,11 +25,13 @@ from entities import driver                         # ✅ absolute import
 # The minio_config module (imported above) automatically sets all required environment variables
 # so Feast can read from s3://ridematch-raw/ without manual exports each time.
 
+from src.config import S3  # noqa: E402  (minio_config already put PROJECT_ROOT on sys.path)
+
 driver_events = FileSource(
-    path="s3://ridematch-raw/driver_events/",       # only driver events (must include driver_id)
+    path=S3.driver_events_uri,                      # only driver events (must include driver_id)
     timestamp_field="timestamp",
     file_format=ParquetFormat(),                    # ✅ must use ParquetFormat()
-    s3_endpoint_override="http://localhost:9000",   # MinIO endpoint (required for PyArrow)
+    s3_endpoint_override=S3.endpoint_url,           # MinIO endpoint (required for PyArrow)
 )
 
 # ------------------------------------------------------------------------------

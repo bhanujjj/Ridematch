@@ -35,12 +35,29 @@ FEATURE_MISSING_COUNT = Counter(
     "Total number of missing feature values",
     ["feature_name"]
 )
-FEATURE_VALUES = Histogram(
-    "feature_values",
-    "Distribution of feature values",
-    ["feature_name"],
-    buckets=[0, 1, 2, 5, 10, 20, 50, 100]  # Generic buckets, adjustable
-)
+# One Histogram per feature rather than a single labelled Histogram.
+#
+# A labelled Histogram shares one bucket layout across every label value, and
+# these features live on wildly different scales: accept_rate_7d is 0-1, while
+# avg_response_ms runs into the thousands. With shared buckets every accept-rate
+# observation collapses into the first bucket and the distribution is unreadable.
+FEATURE_VALUE_HISTOGRAMS = {
+    "distance_km": Histogram(
+        "feature_distance_km",
+        "Distribution of rider-to-driver distance (km)",
+        buckets=[0.25, 0.5, 1, 2, 3, 5, 8, 12, 20, 35],
+    ),
+    "accept_rate_7d": Histogram(
+        "feature_accept_rate_7d",
+        "Distribution of driver 7-day accept rate",
+        buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
+    ),
+    "avg_response_ms": Histogram(
+        "feature_avg_response_ms",
+        "Distribution of driver average response time (ms)",
+        buckets=[100, 250, 500, 750, 1000, 1500, 2000, 3000, 5000],
+    ),
+}
 FEATURE_DRIFT = Gauge(
     "feature_drift_score",
     "Percentage drift (p95 delta) from training baseline",
@@ -79,16 +96,34 @@ class DriftDetector:
     def observe(self, feature_name: str, value: float):
         if feature_name not in self.baseline_stats:
             return
-            
+
         # Add to buffer
         self.buffers[feature_name].append(value)
         self.counters[feature_name] += 1
-        
+
         # Compute drift periodically
         if self.counters[feature_name] >= self.compute_every:
             self._compute_drift(feature_name)
             self.counters[feature_name] = 0
-            
+
+    def observe_many(self, feature_name: str, values):
+        """
+        Bulk version of observe(). The hot path feeds ~100 values per request,
+        so we extend the ring buffer in one call and recompute drift at most
+        once, instead of once per element.
+        """
+        if feature_name not in self.baseline_stats:
+            return
+        n = len(values)
+        if n == 0:
+            return
+        self.buffers[feature_name].extend(values)
+        self.counters[feature_name] += n
+        if self.counters[feature_name] >= self.compute_every:
+            self._compute_drift(feature_name)
+            self.counters[feature_name] = 0
+
+
     def _compute_drift(self, feature_name: str):
         buffer = self.buffers[feature_name]
         if not buffer:
@@ -122,13 +157,24 @@ async def lifespan(app: FastAPI):
         return
 
     # 1. Initialize Feast Feature Store
+    # Support FEAST_FS_YAML env var to point to an alternate feature_store yaml
+    # (e.g., feature_store_local.yaml with SQLite instead of Redis for local dev)
     try:
-        store = FeatureStore(repo_path=str(FEATURE_REPO_PATH))
+        feast_fs_yaml = os.getenv("FEAST_FS_YAML")
+        if feast_fs_yaml and Path(feast_fs_yaml).exists():
+            store = FeatureStore(repo_path=str(FEATURE_REPO_PATH), fs_yaml_file=feast_fs_yaml)
+            print(f"✅ Feast FeatureStore initialized (yaml: {feast_fs_yaml})")
+        else:
+            store = FeatureStore(repo_path=str(FEATURE_REPO_PATH))
+            print(f"✅ Feast FeatureStore initialized (repo: {FEATURE_REPO_PATH})")
         resources["feature_store"] = store
-        print(f"✅ Feast FeatureStore initialized (repo: {FEATURE_REPO_PATH})")
     except Exception as e:
+        # Do not sys.exit() from inside a lifespan handler: it kills the worker
+        # mid-startup and the orchestrator sees a crash loop with no diagnostics.
+        # Come up in a degraded state instead -- /health stays 200 so the
+        # container is debuggable, /ready returns 503 so no traffic is routed.
         print(f"❌ Failed to initialize Feast FeatureStore: {e}")
-        sys.exit(1)
+        resources["startup_error"] = f"feast: {e}"
 
     # 2. Load Ranking Model from MLflow
     try:
@@ -169,20 +215,20 @@ async def lifespan(app: FastAPI):
             if not pkl_files:
                 print(f"❌ Critical: No model found in MLflow OR local {local_models_dir}")
                 print(f"Original error: {inner_e}")
-                sys.exit(1)
-                
-            # Get latest file by mtime
-            latest_pkl = max(pkl_files, key=os.path.getmtime)
-            print(f"   Found local model: {latest_pkl}")
-            
-            try:
-                with open(latest_pkl, "rb") as f:
-                    model = pickle.load(f)
-                resources["model"] = model
-                print(f"✅ Model loaded from local file: {latest_pkl}")
-            except Exception as load_e:
-                print(f"❌ Failed to load local pickle: {load_e}")
-                sys.exit(1)
+                resources["startup_error"] = f"model: no model in MLflow or {local_models_dir}"
+            else:
+                # Get latest file by mtime
+                latest_pkl = max(pkl_files, key=os.path.getmtime)
+                print(f"   Found local model: {latest_pkl}")
+
+                try:
+                    with open(latest_pkl, "rb") as f:
+                        model = pickle.load(f)
+                    resources["model"] = model
+                    print(f"✅ Model loaded from local file: {latest_pkl}")
+                except Exception as load_e:
+                    print(f"❌ Failed to load local pickle: {load_e}")
+                    resources["startup_error"] = f"model: {load_e}"
 
     # 3. Load Feature Statistics for Drift Detection
     try:
@@ -215,11 +261,47 @@ app = FastAPI(title="RideMatch Real-Time API", lifespan=lifespan)
 async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+
+@app.get("/health")
+async def health():
+    """
+    Liveness probe. Answers "is this process alive and serving HTTP?" only.
+    Deliberately never fails on missing dependencies -- a liveness probe that
+    checks downstreams turns a Redis blip into a cluster-wide restart storm.
+    """
+    return {"status": "alive"}
+
+
+@app.get("/ready")
+async def ready(response: Response):
+    """
+    Readiness probe. Answers "should this instance receive traffic?" -- which
+    requires both the feature store and the model to be loaded.
+    """
+    detail = {
+        "feature_store": resources.get("feature_store") is not None,
+        "model": resources.get("model") is not None,
+        "drift_detection": resources.get("drift_detector") is not None,
+    }
+    ok = detail["feature_store"] and detail["model"]
+    if not ok:
+        response.status_code = 503
+        detail["error"] = resources.get("startup_error", "resources not initialized")
+    detail["status"] = "ready" if ok else "not_ready"
+    return detail
+
 @app.post("/match", response_model=MatchResponse)
 @MATCH_REQUEST_LATENCY.time()
-async def match_drivers(request: MatchRequest):
+def match_drivers(request: MatchRequest):
     """
     Rank candidate drivers for a given rider request.
+
+    NOTE: deliberately a *sync* `def`, not `async def`. The body does blocking
+    work -- a synchronous Redis round-trip via Feast and a CPU-bound sklearn
+    `predict_proba`. Declaring it `async` would run that blocking code directly
+    on the event loop, serialising every concurrent request behind the slowest
+    one and destroying tail latency under load. As a sync endpoint FastAPI runs
+    it in the threadpool, so requests actually overlap.
     """
     store = resources.get("feature_store")
     model = resources.get("model")
@@ -330,20 +412,29 @@ async def match_drivers(request: MatchRequest):
     # Track prediction scores
     for s in scores:
         PREDICTION_SCORES.observe(s)
-        
-    # Track Feature Drift
+
+    # Track feature values + drift.
+    #
+    # This used to be `for _, row in df_candidates.iterrows()` with a nested
+    # per-feature loop -- 100 candidates x 3 features of pandas row-boxing on
+    # every single request, which dominated the p99. Now we pull each column
+    # out as a numpy array once and bulk-extend the drift buffers.
     drift_detector = resources.get("drift_detector")
     if drift_detector:
-        # Iterate over all candidates
-        for _, row in df_candidates.iterrows():
-            for feature in ["distance_km", "accept_rate_7d", "avg_response_ms"]:
-                val = row.get(feature)
-                if val is not None:
-                    # Log to Histogram
-                    FEATURE_VALUES.labels(feature_name=feature).observe(val)
-                    # Update Drift Detector
-                    drift_detector.observe(feature, val)
-    
+        for feature in ("distance_km", "accept_rate_7d", "avg_response_ms"):
+            if feature not in df_candidates.columns:
+                continue
+            vals = pd.to_numeric(df_candidates[feature], errors="coerce").to_numpy()
+            vals = vals[~np.isnan(vals)]
+            if vals.size == 0:
+                continue
+            hist = FEATURE_VALUE_HISTOGRAMS.get(feature)
+            if hist is not None:
+                for v in vals:
+                    hist.observe(v)
+            drift_detector.observe_many(feature, vals)
+
+
     # 6. Rank and Filter
     df_ranked = df_candidates.sort_values(by="score", ascending=False).head(request.top_k)
     

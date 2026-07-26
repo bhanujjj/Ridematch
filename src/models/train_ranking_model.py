@@ -13,7 +13,7 @@ Usage:
 import os
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import numpy as np
 from typing import Tuple
@@ -226,26 +226,65 @@ def create_synthetic_driver_features(driver_ids: list, timestamps: pd.DatetimeIn
     return pd.DataFrame(rows)
 
 
-def simulate_ride_requests(driver_features: pd.DataFrame, num_requests: int = 100) -> pd.DataFrame:
+def acceptance_probability(
+    distance_km: np.ndarray,
+    accept_rate_7d: np.ndarray,
+    avg_response_ms: np.ndarray,
+) -> np.ndarray:
     """
-    Simulate ride requests and create training examples.
-    
-    For each request:
-    - Sample a random location (rider origin)
-    - Sample multiple candidate drivers
-    - Compute distance to each driver
-    - Label closest driver as 1, others as 0
-    
+    Ground-truth generative model for "will this driver accept this ride?".
+
+    This is a *stochastic* utility model, not a deterministic rule. That matters:
+    an earlier version of this script labelled the single nearest driver as the
+    positive and everything else as negative, while also feeding `distance_km`
+    to the classifier. That is label leakage -- the label was a pure function of
+    an input feature, so the model could reach ~1.0 AUC while learning nothing.
+
+    Here the label is a Bernoulli draw from a logistic utility:
+      - distance hurts (drivers dislike long pickups)
+      - historical accept rate helps
+      - slow responders are less likely to accept
+    All three features are informative but none is decisive, so AUC lands in a
+    realistic 0.70-0.85 band and the coefficients are interpretable.
+    """
+    # Normalise response time to seconds so coefficients stay on a sane scale.
+    response_s = np.asarray(avg_response_ms, dtype=float) / 1000.0
+
+    logit = (
+        1.20                                        # base propensity
+        - 0.55 * np.asarray(distance_km, dtype=float)   # farther -> less likely
+        + 2.30 * np.asarray(accept_rate_7d, dtype=float)  # reliable -> more likely
+        - 0.40 * response_s                          # sluggish -> less likely
+    )
+    return 1.0 / (1.0 + np.exp(-logit))
+
+
+def simulate_ride_requests(
+    driver_features: pd.DataFrame,
+    num_requests: int = 100,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Simulate ride requests and build a leakage-free training set.
+
+    For each request we sample a rider origin and a candidate slate of drivers,
+    compute the true features, then draw the acceptance label from
+    `acceptance_probability`. The label is therefore correlated with the
+    features but not determined by them.
+
     Args:
         driver_features: DataFrame with driver features
         num_requests: Number of ride requests to simulate
-    
+        seed: RNG seed for reproducibility
+
     Returns:
         DataFrame with training examples (request_id, driver_id, features, label)
     """
     print(f"🚕 Simulating {num_requests} ride requests...")
-    
-    # Get unique driver snapshots (latest per driver)
+
+    rng = np.random.default_rng(seed)
+
+    # Latest snapshot per driver
     driver_latest = (
         driver_features
         .sort_values("event_timestamp")
@@ -253,55 +292,72 @@ def simulate_ride_requests(driver_features: pd.DataFrame, num_requests: int = 10
         .tail(1)
         .reset_index(drop=True)
     )
-    
+
     if len(driver_latest) == 0:
         raise ValueError("No driver features available. Check Feast data source.")
-    
+
     print(f"   Found {len(driver_latest)} unique drivers")
-    
-    # Center coordinates (NYC area)
-    center_lat, center_lon = 40.7128, -74.0060
-    
-    training_examples = []
-    
+
+    # Rider origins are drawn around the centroid of the actual driver
+    # population rather than a hardcoded city, so the simulation stays
+    # consistent with whatever the generator produced.
+    center_lat = float(driver_latest["lat"].astype(float).mean())
+    center_lon = float(driver_latest["lon"].astype(float).mean())
+    print(f"   Rider origins centred on ({center_lat:.4f}, {center_lon:.4f})")
+
+    d_lat = driver_latest["lat"].astype(float).to_numpy()
+    d_lon = driver_latest["lon"].astype(float).to_numpy()
+    d_accept = pd.to_numeric(driver_latest["accept_rate_7d"], errors="coerce").to_numpy()
+    d_resp = pd.to_numeric(driver_latest["avg_response_ms"], errors="coerce").to_numpy()
+    d_ids = driver_latest["driver_id"].to_numpy()
+
+    # Median-impute the aggregate features for the *simulation* only, so the
+    # ground-truth utility is always defined. The model pipeline still does its
+    # own imputation on the raw (possibly NaN) values it receives.
+    sim_accept = np.where(np.isnan(d_accept), np.nanmedian(d_accept), d_accept)
+    sim_resp = np.where(np.isnan(d_resp), np.nanmedian(d_resp), d_resp)
+    if np.all(np.isnan(sim_accept)):
+        sim_accept = np.full_like(d_lat, 0.8)
+    if np.all(np.isnan(sim_resp)):
+        sim_resp = np.full_like(d_lat, 800.0)
+
+    n_drivers = len(driver_latest)
+    max_candidates = min(11, n_drivers + 1)
+    frames = []
+
     for request_id in range(num_requests):
-        # Simulate rider origin (random location near center)
-        rider_lat = center_lat + np.random.uniform(-0.05, 0.05)
-        rider_lon = center_lon + np.random.uniform(-0.05, 0.05)
-        
-        # Sample 5-10 candidate drivers per request
-        num_candidates = np.random.randint(5, min(11, len(driver_latest) + 1))
-        candidates = driver_latest.sample(n=num_candidates, replace=False)
-        
-        # Compute distance for each candidate
-        distances = []
-        for _, driver_row in candidates.iterrows():
-            dist = haversine_distance(
-                rider_lat, rider_lon,
-                driver_row["lat"], driver_row["lon"]
-            )
-            distances.append(dist)
-        
-        # Label: closest driver = 1, others = 0
-        closest_idx = np.argmin(distances)
-        
-        # Create training examples
-        for idx, (_, driver_row) in enumerate(candidates.iterrows()):
-            label = 1 if idx == closest_idx else 0
-            
-            training_examples.append({
-                "request_id": f"request_{request_id}",
-                "driver_id": driver_row["driver_id"],
-                "distance_km": distances[idx],
-                "accept_rate_7d": driver_row["accept_rate_7d"],
-                "avg_response_ms": driver_row["avg_response_ms"],
-                "label": label,
-            })
-    
-    training_df = pd.DataFrame(training_examples)
+        rider_lat = center_lat + rng.uniform(-0.05, 0.05)
+        rider_lon = center_lon + rng.uniform(-0.05, 0.05)
+
+        num_candidates = int(rng.integers(5, max(6, max_candidates)))
+        num_candidates = min(num_candidates, n_drivers)
+        idx = rng.choice(n_drivers, size=num_candidates, replace=False)
+
+        distances = haversine_distance(rider_lat, rider_lon, d_lat[idx], d_lon[idx])
+
+        p_accept = acceptance_probability(distances, sim_accept[idx], sim_resp[idx])
+        labels = (rng.random(num_candidates) < p_accept).astype(int)
+
+        frames.append(pd.DataFrame({
+            "request_id": f"request_{request_id}",
+            "driver_id": d_ids[idx],
+            "distance_km": distances,
+            # Keep the *raw* feature values (NaNs included) as model input.
+            "accept_rate_7d": d_accept[idx],
+            "avg_response_ms": d_resp[idx],
+            "label": labels,
+        }))
+
+    training_df = pd.concat(frames, ignore_index=True)
     print(f"✅ Created {len(training_df)} training examples")
     print(f"   Positive labels: {training_df['label'].sum()} ({100 * training_df['label'].mean():.1f}%)")
-    
+
+    if training_df["label"].nunique() < 2:
+        raise ValueError(
+            "Simulation produced a single label class. Check that driver features "
+            "have realistic spread in lat/lon/accept_rate_7d."
+        )
+
     return training_df
 
 
@@ -352,7 +408,23 @@ def train_model(
     print("✅ Model training completed")
     print(f"   Validation AUC: {metrics['val_auc']:.4f}")
     print(f"   Validation Accuracy: {metrics['val_accuracy']:.4f}")
-    
+
+    # Leakage tripwire. A near-perfect AUC on a noisy real-world ranking task
+    # almost always means a feature encodes the label. Surface it loudly rather
+    # than shipping a model that looks great and generalises to nothing.
+    if metrics["val_auc"] > 0.99:
+        print()
+        print("🚨 WARNING: validation AUC > 0.99 — suspect label leakage.")
+        print("   Check that no input feature is a deterministic function of the label.")
+
+    # Interpretability: log the learned coefficients so the ranking is auditable.
+    try:
+        clf = model.named_steps["clf"]
+        for name, coef in zip(X_train.columns, clf.coef_[0]):
+            print(f"   coef[{name}] = {coef:+.4f}")
+    except Exception:  # noqa: BLE001 - purely informational
+        pass
+
     return model, metrics
 
 
@@ -456,7 +528,10 @@ def main():
         sys.exit(1)
     
     # Define time range for historical features
-    end_date = datetime.utcnow()
+    # timezone-aware; datetime.utcnow() is deprecated in 3.12+ and returns a
+    # naive datetime that silently mis-compares against the tz-aware parquet
+    # timestamps.
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=7)  # Last 7 days
     
     # Load driver features
