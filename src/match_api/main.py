@@ -1,15 +1,22 @@
+import json
 import os
 import sys
-import pandas as pd
-import numpy as np
-import mlflow
-from pathlib import Path
+from collections import deque
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+import mlflow
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Response
 from feast import FeatureStore
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-import json
-from collections import deque
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 from .schemas import MatchRequest, MatchResponse, MatchResponseItem
 from .utils import haversine_distance

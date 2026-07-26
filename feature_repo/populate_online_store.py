@@ -12,12 +12,9 @@ Usage:
     python populate_online_store.py
 """
 
-import os
+import random
 import sys
 from pathlib import Path
-from datetime import datetime, timezone
-import random
-import json
 
 # Add feature_repo to path
 feature_repo_path = Path(__file__).parent
@@ -28,8 +25,8 @@ try:
 except ImportError:
     pass
 
-from feast import FeatureStore
 import redis
+from feast import FeatureStore
 
 
 def populate_online_store():
@@ -42,7 +39,7 @@ def populate_online_store():
     store = FeatureStore(repo_path=str(feature_repo_path))
     
     print(f"📁 Feature repo: {feature_repo_path}")
-    print(f"🔗 Online store: Redis (localhost:6379)")
+    print("🔗 Online store: Redis (localhost:6379)")
     print()
     
     # Connect to Redis

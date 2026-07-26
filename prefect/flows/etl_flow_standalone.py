@@ -2,12 +2,14 @@
 Standalone ETL script that consumes Kafka events and writes to MinIO.
 This version runs without requiring a Prefect server.
 """
-from datetime import datetime
-import pandas as pd
-import boto3
 import json
-from confluent_kafka import Consumer
 import os
+from datetime import datetime
+
+import boto3
+import pandas as pd
+from confluent_kafka import Consumer
+
 
 def consume_kafka(batch_size=100, timeout=1):
     """Consume messages from Kafka."""

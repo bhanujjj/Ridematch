@@ -10,11 +10,19 @@ Usage:
     python run_e2e_local.py
 """
 
-import os, sys, json, time, glob, pickle, subprocess, traceback
+import glob
+import json
+import os
+import pickle
+import subprocess
+import sys
+import time
+import traceback
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -67,7 +75,7 @@ sim_df = pd.DataFrame(batch)
 sim_parquet = PROJECT_ROOT / "feature_repo" / "data" / "sim_events.parquet"
 sim_parquet.parent.mkdir(parents=True, exist_ok=True)
 sim_df.to_parquet(sim_parquet, index=False)
-ok(f"Saved sim data → feature_repo/data/sim_events.parquet")
+ok("Saved sim data → feature_repo/data/sim_events.parquet")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 2 — ETL: Load Parquet Data
@@ -200,7 +208,7 @@ driver_agg_fv = FeatureView(
     online=True,
 )
 """)
-ok(f"Wrote local feature definitions → _local_features.py")
+ok("Wrote local feature definitions → _local_features.py")
 
 # In-process feast apply + materialize (no subprocess)
 FEAST_OK = False
@@ -212,11 +220,12 @@ try:
     store = FeatureStore(repo_path=str(FEAST_REPO), fs_yaml_file=str(FS_YAML))
 
     # Apply feature definitions inline
-    from feast import Entity, FeatureView, Field
-    from feast.types import Float32
-    from feast.infra.offline_stores.file_source import FileSource
-    from feast.data_format import ParquetFormat
     from datetime import timedelta
+
+    from feast import Entity, FeatureView, Field
+    from feast.data_format import ParquetFormat
+    from feast.infra.offline_stores.file_source import FileSource
+    from feast.types import Float32
 
     driver_entity = Entity(name="driver_id", join_keys=["driver_id"])
     driver_source = FileSource(
@@ -307,7 +316,7 @@ try:
 
         df_ranked = df_cands.sort_values("score", ascending=False).head(5)
         ok(f"Ranked {len(df_cands)} candidate drivers")
-        ok(f"Top 5 match results:")
+        ok("Top 5 match results:")
         for _, row in df_ranked.iterrows():
             print(f"      {row['driver_id']:12s} | score={row['score']:.4f}"
                   f" | dist={row['distance_km']:.2f}km"
@@ -489,18 +498,18 @@ failed = [r for r in results if r[0] == "FAIL"]
 warned = [r for r in results if r[0] == "WARN"]
 
 print(f"\n{'═'*60}")
-print(f"  RideMatch E2E Local Pipeline — FINAL REPORT")
+print("  RideMatch E2E Local Pipeline — FINAL REPORT")
 print(f"{'═'*60}")
 print(f"\n  {PASS} PASSED : {len(passed)}")
 print(f"  {FAIL} FAILED : {len(failed)}")
 print(f"  {WARN} WARNED : {len(warned)}")
 
 if failed:
-    print(f"\n  ── Failed ──")
+    print("\n  ── Failed ──")
     for _, m in failed: print(f"    {FAIL} {m}")
 
 if warned:
-    print(f"\n  ── Warnings (infra not running) ──")
+    print("\n  ── Warnings (infra not running) ──")
     for _, m in warned: print(f"    {WARN} {m}")
 
 print(f"\n{'═'*60}")

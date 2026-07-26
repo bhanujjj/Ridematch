@@ -1,7 +1,8 @@
-from prefect import flow, task
+import os
 import subprocess
 from datetime import datetime
-import os
+
+from prefect import flow, task
 
 
 # === Prefect Task ===

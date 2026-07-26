@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import S3  # noqa: E402
+from src.config import S3
 
 # Push AWS_*/ARROW_* vars into os.environ for PyArrow, boto3 and the Feast CLI.
 S3.export_env()

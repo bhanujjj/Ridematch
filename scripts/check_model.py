@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import sys
-import pickle
-import glob
 import os
+import pickle
+import sys
 from pathlib import Path
+
 
 def main():
     print("🔍 Checking model artifacts...")

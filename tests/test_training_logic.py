@@ -45,7 +45,7 @@ _mlflow.exceptions = sys.modules["mlflow.exceptions"]
 _mlflow.sklearn = sys.modules["mlflow.sklearn"]
 _stub("minio_config")
 
-from src.models.train_ranking_model import (  # noqa: E402
+from src.models.train_ranking_model import (
     acceptance_probability,
     haversine_distance,
     simulate_ride_requests,

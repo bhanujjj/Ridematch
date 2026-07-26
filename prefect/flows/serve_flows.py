@@ -23,7 +23,6 @@ flows_dir = Path(__file__).parent
 sys.path.insert(0, str(flows_dir))
 
 from etl_flow import ridematch_ingest_flow
-from train_flow import train_flow
 
 
 def serve_flows():

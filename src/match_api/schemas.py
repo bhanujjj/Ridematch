@@ -1,5 +1,6 @@
+
 from pydantic import BaseModel, Field
-from typing import List
+
 
 class MatchRequest(BaseModel):
     rider_id: str = Field(..., description="Unique identifier for the rider")
@@ -13,4 +14,4 @@ class MatchResponseItem(BaseModel):
     distance_km: float
 
 class MatchResponse(BaseModel):
-    matches: List[MatchResponseItem]
+    matches: list[MatchResponseItem]

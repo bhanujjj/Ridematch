@@ -1,7 +1,10 @@
-import json, random, time, uuid
+import json
+import random
+import time
+import uuid
 from datetime import datetime, timezone
+
 from confluent_kafka import Producer
-import sys
 
 BROKER = "localhost:9092"
 

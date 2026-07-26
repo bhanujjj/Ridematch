@@ -1,12 +1,9 @@
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
 import sys
-import os
-import pandas as pd
-import json
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
+from fastapi.testclient import TestClient
 
 # Mock dependencies before importing main
 sys.modules["feast"] = MagicMock()
@@ -14,7 +11,7 @@ sys.modules["mlflow"] = MagicMock()
 sys.modules["mlflow.sklearn"] = MagicMock()
 
 # Import app after mocking
-from src.match_api.main import app, resources, DriftDetector
+from src.match_api.main import DriftDetector, app, resources
 
 client = TestClient(app)
 

@@ -1,0 +1,35 @@
+exclude = [
+  ".mlflow-venv",
+  "mlruns",
+  "feature_repo/_local_features.py",
+  # Ad-hoc local smoke-test script, not shipped application code -- its
+  # terse one-line helpers (def ok(msg): print(...); results.append(...))
+  # are a deliberate compact style for a CLI status script, not a mistake.
+  "run_e2e_local.py",
+]
+
+[lint]
+# Ruff with zero config implicitly pulls in extended categories (blind-except,
+# datetime-tz, bandit security, async-blocking, ...) whose defaults drift
+# between versions. Pin an explicit, standard baseline (pycodestyle errors,
+# pyflakes, unused imports/vars) instead of the broader opinionated set --
+# this codebase deliberately uses broad `except Exception` for graceful
+# startup degradation (see src/match_api/main.py lifespan handler), which is
+# a design choice, not an oversight.
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# These files intentionally import after sys.path.insert() (to reach a
+# sibling package) or after seeding sys.modules with mocks (to intercept
+# feast/mlflow before the app imports them) -- both require the import to
+# come after the setup, not before.
+"feature_repo/materialize_features.py" = ["E402"]
+"feature_repo/minio_config.py" = ["E402"]
+"feature_repo/populate_online_store.py" = ["E402"]
+"feature_repo/verify_online_features.py" = ["E402"]
+"prefect/flows/deploy_flows.py" = ["E402"]
+"prefect/flows/etl_flow.py" = ["E402"]
+"prefect/flows/serve_flows.py" = ["E402"]
+"src/models/train_ranking_model.py" = ["E402"]
+"tests/test_ci.py" = ["E402"]
+"tests/test_training_logic.py" = ["E402"]

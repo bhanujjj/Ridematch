@@ -147,13 +147,19 @@ services:
       - "5050:5000"
     # psycopg2 + boto3 are not in the base image.
     entrypoint: ["/bin/sh", "-c"]
+    # NOTE: every continuation line below must share the same indentation.
+    # A folded (">") scalar only joins lines with a space when they're at
+    # the *same* indent as the first; a more-indented line (this bit us
+    # once already) is instead preserved with a literal newline, which
+    # turns "mlflow server" into a bare, argument-less statement that sh
+    # runs and blocks on forever -- silently dropping --host/--port/etc.
     command: >
       "pip install --no-cache-dir psycopg2-binary boto3 >/dev/null &&
-       mlflow server
-         --host 0.0.0.0 --port 5000
-         --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
-         --artifacts-destination s3://mlflow-artifacts
-         --serve-artifacts"
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
+      --artifacts-destination s3://mlflow-artifacts
+      --serve-artifacts"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:5000/health')\""]
       interval: 10s

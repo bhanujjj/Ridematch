@@ -12,8 +12,8 @@ Usage:
 
 import os
 import sys
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # Add feature_repo to path
 feature_repo_path = Path(__file__).parent
@@ -47,7 +47,7 @@ def materialize_features():
     store = FeatureStore(repo_path=str(feature_repo_path))
     
     print(f"📁 Feature repo: {feature_repo_path}")
-    print(f"🔗 Online store: Redis (localhost:6379)")
+    print("🔗 Online store: Redis (localhost:6379)")
     print()
     
     # Materialize features up to now
@@ -70,7 +70,7 @@ def materialize_features():
     except Exception as e:
         error_msg = str(e)
         if "'str' object has no attribute 'tzinfo'" in error_msg:
-            print(f"⚠️  Materialization failed due to timestamp parsing issue in Feast 0.56.0")
+            print("⚠️  Materialization failed due to timestamp parsing issue in Feast 0.56.0")
             print()
             print("This is a known issue with Feast when reading parquet files with string timestamps.")
             print()

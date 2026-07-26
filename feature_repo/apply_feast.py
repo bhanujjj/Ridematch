@@ -38,8 +38,9 @@ except ImportError:
     pass
 
 # Now import and run Feast
-from feast.repo_operations import apply_total
 from feast.repo_config import load_repo_config
+from feast.repo_operations import apply_total
+
 
 def main():
     """Apply Feast feature definitions with MinIO configuration."""

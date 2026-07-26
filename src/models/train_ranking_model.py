@@ -12,11 +12,11 @@ Usage:
 
 import os
 import sys
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
-from typing import Tuple
+import pandas as pd
 
 # Add feature_repo to path for Feast imports
 project_root = Path(__file__).parent.parent.parent
@@ -40,17 +40,18 @@ except ImportError:
         "AWS_REGION": "us-east-1",
     })
 
-from feast import FeatureStore
+import urllib.request
+import warnings
+from urllib.error import URLError
+
 import mlflow
 import mlflow.exceptions
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
+from feast import FeatureStore
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import roc_auc_score, accuracy_score, log_loss
-import warnings
-import urllib.request
-from urllib.error import URLError
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 
 warnings.filterwarnings("ignore")
 
@@ -366,7 +367,7 @@ def train_model(
     y_train: pd.Series,
     X_val: pd.DataFrame,
     y_val: pd.Series,
-) -> Tuple[Pipeline, dict]:
+) -> tuple[Pipeline, dict]:
     """
     Train a ranking model and evaluate on validation set.
     
@@ -444,9 +445,7 @@ def check_mlflow_available(tracking_uri: str) -> bool:
     
     try:
         # Extract host and port from URI
-        if tracking_uri.startswith("http://"):
-            url = tracking_uri.rstrip("/") + "/health"
-        elif tracking_uri.startswith("https://"):
+        if tracking_uri.startswith("http://") or tracking_uri.startswith("https://"):
             url = tracking_uri.rstrip("/") + "/health"
         else:
             # Assume it's a file path
@@ -491,7 +490,7 @@ def setup_mlflow_tracking(mlflow_tracking_uri: str, experiment_name: str) -> boo
         mlflow.set_experiment(experiment_name)
         print(f"📁 Using local MLflow tracking: {local_mlruns}")
         print(f"   (MLflow server not available at {mlflow_tracking_uri})")
-        print(f"   To use server tracking, start MLflow: cd infra && docker-compose up -d mlflow")
+        print("   To use server tracking, start MLflow: cd infra && docker-compose up -d mlflow")
         return False
     except Exception as e:
         print(f"❌ Failed to setup MLflow tracking: {e}")
@@ -678,12 +677,12 @@ def main():
             except Exception as e:
                 print(f"⚠️  Model registration failed (this is optional): {e}")
                 print(f"   Model is still logged at: {model_uri}")
-                print(f"   You can register it manually later from the MLflow UI")
+                print("   You can register it manually later from the MLflow UI")
     
     print("\n" + "=" * 60)
     print("✅ Training pipeline completed successfully!")
     print("=" * 60)
-    print(f"\n📊 Model Performance:")
+    print("\n📊 Model Performance:")
     print(f"   Validation AUC: {metrics['val_auc']:.4f}")
     print(f"   Validation Accuracy: {metrics['val_accuracy']:.4f}")
     
@@ -693,7 +692,7 @@ def main():
     else:
         local_mlruns = project_root / "mlruns"
         print(f"\n📁 Results saved locally: {local_mlruns}")
-        print(f"   To view in MLflow UI, start server: cd infra && docker-compose up -d mlflow")
+        print("   To view in MLflow UI, start server: cd infra && docker-compose up -d mlflow")
         print(f"   Then copy mlruns/ to mlflow_data/ or use: mlflow ui --backend-store-uri file://{local_mlruns}")
 
 

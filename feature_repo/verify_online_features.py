@@ -12,7 +12,6 @@ Example:
     python verify_online_features.py driver_0
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -38,13 +37,13 @@ def verify_online_features(driver_id: str = "driver_0"):
     # Initialize Feast feature store
     try:
         store = FeatureStore(repo_path=str(feature_repo_path))
-        print(f"✅ Feature store initialized")
+        print("✅ Feature store initialized")
     except Exception as e:
         print(f"❌ Failed to initialize feature store: {e}")
         sys.exit(1)
     
     print(f"📁 Feature repo: {feature_repo_path}")
-    print(f"🔗 Online store: Redis (localhost:6379)")
+    print("🔗 Online store: Redis (localhost:6379)")
     print(f"👤 Driver ID: {driver_id}")
     print()
     

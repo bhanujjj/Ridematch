@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Calculate the great circle distance between two points on Earth (in km).

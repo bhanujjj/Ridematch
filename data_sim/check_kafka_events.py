@@ -9,9 +9,11 @@ Usage:
     python check_kafka_events.py [num_messages]
 """
 
-import sys
-from confluent_kafka import Consumer
 import json
+import sys
+
+from confluent_kafka import Consumer
+
 
 def check_events(num_messages=5):
     """Check for events in Kafka topic."""

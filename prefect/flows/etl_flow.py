@@ -20,13 +20,14 @@ import boto3
 import pandas as pd
 from botocore.config import Config as BotoConfig
 from confluent_kafka import Consumer, KafkaException
+
 from prefect import flow, task
 
 # Make src/ importable regardless of where this is invoked from.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import KAFKA, S3  # noqa: E402
+from src.config import KAFKA, S3
 
 PREFECT_SERVER_AVAILABLE = os.getenv("PREFECT_API_URL", "").strip() != ""
 

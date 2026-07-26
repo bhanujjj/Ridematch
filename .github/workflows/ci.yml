@@ -81,7 +81,7 @@ jobs:
       
       - name: Build Docker Image
         run: |
-          docker build -t ridematch-api -f infra/Dockerfile .
+          docker build -t ridematch-api -f Dockerfile .
           
       - name: Run Container (Smoke Test)
         run: |

@@ -1,14 +1,13 @@
 # Configure MinIO settings before importing Feast components
 # This ensures PyArrow uses the correct endpoint and path-style addressing
-import minio_config  # noqa: F401 - Imported for side effects (env var setup)
-
 from datetime import timedelta
 
+import minio_config  # noqa: F401 - Imported for side effects (env var setup)
+from entities import driver  # ✅ absolute import
 from feast import FeatureView, Field
-from feast.types import Float32, String
+from feast.data_format import ParquetFormat  # ✅ new import for Feast ≥0.40
 from feast.infra.offline_stores.file_source import FileSource
-from feast.data_format import ParquetFormat        # ✅ new import for Feast ≥0.40
-from entities import driver                         # ✅ absolute import
+from feast.types import Float32, String
 
 # ------------------------------------------------------------------------------
 # 1️⃣  Offline Source (MinIO or local S3-compatible bucket)
@@ -24,8 +23,9 @@ from entities import driver                         # ✅ absolute import
 #
 # The minio_config module (imported above) automatically sets all required environment variables
 # so Feast can read from s3://ridematch-raw/ without manual exports each time.
-
-from src.config import S3  # noqa: E402  (minio_config already put PROJECT_ROOT on sys.path)
+from src.config import (
+    S3,
+)
 
 driver_events = FileSource(
     path=S3.driver_events_uri,                      # only driver events (must include driver_id)
